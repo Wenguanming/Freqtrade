@@ -121,3 +121,10 @@ target/
 !config_examples/config_freqai.example.json
 
 docker-compose-*.yml
+
+# Local Chinese UI / public leader integration
+!config_examples/config_local_dryrun.example.json
+.env.*
+!.env.example
+/extensions/leader-monitor/*-state.json
+/extensions/leader-monitor/*-check.json

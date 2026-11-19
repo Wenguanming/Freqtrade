@@ -1,0 +1,3 @@
+FreqUI 3.2.1
+Commit 4e1717ad1eaaf98447ebe2bdf4c00c8d755d2191
+Local simplified Chinese UI build

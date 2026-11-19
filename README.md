@@ -1,3 +1,5 @@
+> 本分支包含中文 FreqUI、SampleStrategy 模拟合约配置和交易员监控接入。请先阅读 [本地中文版本启动说明](README.local.zh-CN.md)。
+
 # ![freqtrade](https://raw.githubusercontent.com/freqtrade/freqtrade/develop/docs/assets/freqtrade_poweredby.svg)
 
 [![Freqtrade CI](https://github.com/freqtrade/freqtrade/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/freqtrade/freqtrade/actions/workflows/ci.yml)

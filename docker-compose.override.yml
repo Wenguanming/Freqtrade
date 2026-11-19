@@ -1,0 +1,5 @@
+# Load the locally translated interface while preserving the main service configuration.
+services:
+  freqtrade:
+    volumes:
+      - "./user_data/ui-zh:/freqtrade/freqtrade/rpc/api_server/ui/installed:ro"
