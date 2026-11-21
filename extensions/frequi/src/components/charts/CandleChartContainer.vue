@@ -178,7 +178,9 @@ const singlePairSelection = computed({
         </BaseCheckbox>
         <div class="ms-auto flex flex-wrap items-center gap-2">
           <BaseCheckbox v-model="settingsStore.showSignalLabels">
-            <span class="text-nowrap">{{ isPublicMarket ? '标注交易员成交' : '标注买卖点' }}</span>
+            <span class="text-nowrap">{{
+              isPublicMarket && isSinglePairView ? '标注交易员成交' : '显示信号标签'
+            }}</span>
           </BaseCheckbox>
           <BaseCheckbox v-model="settingsStore.showMarkArea">
             <span class="text-nowrap">显示持仓区间</span>
@@ -194,15 +196,6 @@ const singlePairSelection = computed({
           </div>
         </div>
       </div>
-      <p v-if="isPublicMarket" class="mx-2 my-1 text-xs text-muted">
-        MU/USDT:USDT 为 USDT
-        结算永续；每分钟更新公开行情。标记为熬鹰资本的公开成交，未在你的账户执行。末根 K
-        线尚未收盘。
-      </p>
-      <p v-else class="mx-2 my-1 text-xs text-muted">
-        标记表示策略条件触发，不代表实际成交或持仓。合约多头标记在 K
-        线下方、空头在上方；止盈止损成交请看交易记录。
-      </p>
       <div
         v-if="botStore.activeBot.plotMultiPairs?.length > 0"
         :class="{
@@ -215,7 +208,7 @@ const singlePairSelection = computed({
           :key="pair"
           :available-pairs="availablePairs"
           :pair="pair"
-          :historic-view="botStore.activeBot.isWebserverMode"
+          :historic-view="props.historicView"
           :timeframe="timeframe"
           :trades="props.trades"
           :slider-position="props.sliderPosition"

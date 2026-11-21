@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ChartSliderPosition, PairHistory, Trade } from '@/types';
 import { LoadingStatus } from '@/types';
+import { candleSignals, type CandleSignal } from '@/utils/charts/candleSignals';
 
 const props = withDefaults(
   defineProps<{
@@ -29,7 +30,10 @@ const settingsStore = useSettingsStore();
 const colorStore = useColorStore();
 const botStore = useBotStore();
 const plotStore = usePlotConfigStore();
-const signalChart = useTemplateRef<{ showAllSignals: () => void }>('signalChart');
+const signalChart = useTemplateRef<{
+  showAllSignals: () => void;
+  showLatestSignal: (signal: CandleSignal) => void;
+}>('signalChart');
 // A spot bot can calculate unused short columns; do not present them as active signals.
 const showShortSignals = computed(
   () => !botStore.activeBot.isTrading || botStore.activeBot.shortAllowed,
@@ -43,22 +47,13 @@ const dataset = computed((): PairHistory | undefined => {
 });
 const isPublicMarket = computed(() => dataset.value?.data_source === 'public-market');
 
-const signalCandleCount = computed(() => {
-  if (!dataset.value) return 0;
-  const names = [
-    '_enter_long_signal_close',
-    '_buy_signal_close',
-    '_exit_long_signal_close',
-    '_sell_signal_close',
-    ...(showShortSignals.value ? ['_enter_short_signal_close', '_exit_short_signal_close'] : []),
-  ];
-  const indices = dataset.value.columns
-    .map((name, index) => (names.includes(name) ? index : -1))
-    .filter((index) => index >= 0);
-  return dataset.value.data.filter((row) =>
-    indices.some((index) => row[index] != null && Number.isFinite(row[index])),
-  ).length;
-});
+const signals = computed(() => candleSignals(dataset.value, showShortSignals.value));
+const signalCandleCount = computed(
+  () => new Set(signals.value.flatMap((signal) => signal.points.map(([time]) => time))).size,
+);
+const fillSeriesName = computed(() =>
+  props.historicView ? '回测成交' : botStore.activeBot.botState.dry_run ? '模拟成交' : '实盘成交',
+);
 
 const loadedRange = computed(() => {
   if (!dataset.value) return '';
@@ -170,25 +165,24 @@ watch(
         <div v-if="isPublicMarket" class="text-sm">
           只读行情 · 交易员成交 {{ dataset?.annotations.length ?? 0 }} 笔
         </div>
-        <div v-else class="flex flex-col md:flex-row md:gap-2">
-          <div class="flex flex-row flex-wrap gap-2">
-            <small v-if="dataset" class="text-sm text-nowrap" title="Long entry signals"
-              >{{ showShortSignals ? '开多' : '买入' }}：
-              {{ dataset.enter_long_signals ?? dataset.buy_signals ?? 0 }}</small
+        <div v-else class="flex flex-wrap items-center gap-2">
+          <template v-for="signal in signals" :key="signal.key">
+            <UButton
+              v-if="signal.entry"
+              size="xs"
+              variant="subtle"
+              :color="signal.below ? 'success' : 'error'"
+              :disabled="!signal.points.length"
+              :title="`定位最近一次${signal.name}`"
+              @click="signalChart?.showLatestSignal(signal)"
             >
-            <small v-if="dataset" class="text-sm text-nowrap" title="Long exit signals"
-              >{{ showShortSignals ? '平多' : '卖出' }}：
-              {{ dataset.exit_long_signals ?? dataset.sell_signals ?? 0 }}</small
+              {{ signal.below ? '▲' : '▼' }} {{ signal.name }} {{ signal.points.length }}
+              <span v-if="signal.points.length">· 定位最近</span>
+            </UButton>
+            <small v-else class="text-xs text-muted"
+              >{{ signal.name }} {{ signal.points.length }}</small
             >
-          </div>
-          <div v-if="showShortSignals" class="flex flex-row flex-wrap gap-2">
-            <small v-if="dataset" class="text-sm text-nowrap"
-              >开空： {{ dataset.enter_short_signals ?? 0 }}</small
-            >
-            <small v-if="dataset" class="text-sm text-nowrap"
-              >平空： {{ dataset.exit_short_signals ?? 0 }}</small
-            >
-          </div>
+          </template>
         </div>
       </div>
       <div>
@@ -217,7 +211,12 @@ watch(
       <span v-if="isPublicMarket"
         >行情更新：{{ leaderTime(dataset.source_updated_at) }}（北京时间）</span
       >
-      <span v-else>以上为全量统计；缩放后可点“显示全部信号”恢复。</span>
+      <span v-if="isPublicMarket"
+        >标记来自熬鹰资本的公开成交，不是本机器人的交易。末根 K 线尚未收盘。</span
+      >
+      <span v-else
+        >三角是策略信号，不代表成交；带“成交”的标记才是{{ fillSeriesName }}，按成交价绘制。</span
+      >
     </div>
     <UAlert
       v-if="dataset?.source_error"
@@ -238,7 +237,8 @@ watch(
             isPublicMarket ? settingsStore.showSignalLabels : settingsStore.showMarkArea
           "
           :show-signal-labels="settingsStore.showSignalLabels"
-          :show-short-signals="showShortSignals"
+          :signals="signals"
+          :fill-series-name="fillSeriesName"
           :use-u-t-c="settingsStore.timezone === 'UTC'"
           :theme="settingsStore.chartTheme"
           :slider-position="sliderPosition"

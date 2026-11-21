@@ -1,4 +1,8 @@
 import type { Order, PairHistory, Trade, BTOrder } from '@/types';
+import { formatNumber, formatPercent, formatPriceCurrency } from '@/utils/formatters/numberformat';
+import { splitTradePair } from '@/utils/formatters/pairFormat';
+import { timestampmsWithTimezone } from '@/utils/formatters/timeformat';
+import roundTimeframe from '@/utils/roundTimeframe';
 
 import type {
   MarkAreaComponentOption,
@@ -8,42 +12,36 @@ import type {
   TooltipComponentOption,
 } from 'echarts';
 
-function buildTooltipCost(order: Order | BTOrder, quoteCurrency: string): string {
-  return `${order.ft_order_side === 'buy' ? '+' : '-'}${formatPriceCurrency(
-    'cost' in order ? order.cost : order.amount * order.safe_price,
-    quoteCurrency,
-  )}`;
+function filledAt(order: Order | BTOrder): number | undefined {
+  const time = order.order_filled_timestamp;
+  if (time == null || !Number.isFinite(time) || ('filled' in order && !(Number(order.filled) > 0)))
+    return;
+  return time;
 }
 
 function buildToolTip(
   trade: Trade,
   order: Order | BTOrder,
-  side: string,
+  label: string,
+  time: number,
   quoteCurrency: string,
+  finalExit: boolean,
 ): string {
-  let tooltip = `${trade.is_short ? 'Short' : 'Long'} ${side}
-  ${formatPercent(trade.profit_ratio)} ${
-    trade.profit_abs ? '(' + formatPriceCurrency(trade.profit_abs, quoteCurrency) + ')' : ''
-  }
-  ${buildTooltipCost(order, quoteCurrency)}
-  Enter-tag: ${trade.enter_tag ?? ''}
-  Order Price: ${formatPriceCurrency(order.safe_price, quoteCurrency)}`;
-  tooltip += `${'ft_order_tag' in order && order.ft_order_tag && trade.enter_tag != order.ft_order_tag ? '\nOrder-Tag: ' + order.ft_order_tag : ''}`;
-  tooltip += `${trade.exit_reason ? '\nExit-Tag: ' + trade.exit_reason : ''}`;
-  return tooltip;
-}
-
-function buildAdjustmentToolTip(
-  trade: Trade,
-  order: Order | BTOrder,
-  quoteCurrency: string,
-): string {
-  let tooltip = `${trade.is_short ? 'Short' : 'Long'} adjustment
-  ${buildTooltipCost(order, quoteCurrency)}
-  Enter-tag: ${trade.enter_tag ?? ''}`;
-  tooltip += `${'ft_order_tag' in order && order.ft_order_tag ? '\nOrder-Tag: ' + order.ft_order_tag : ''}`;
-
-  return tooltip;
+  return [
+    label,
+    `成交时间：${timestampmsWithTimezone(time)}`,
+    `成交价：${formatNumber(order.safe_price)} ${quoteCurrency}`,
+    `成交额：${formatPriceCurrency('cost' in order ? order.cost : order.amount * order.safe_price, quoteCurrency)}`,
+    finalExit && `本笔盈亏：${formatPercent(trade.profit_ratio, 2)}`,
+    trade.enter_tag && `入场标签：${trade.enter_tag}`,
+    'ft_order_tag' in order &&
+      order.ft_order_tag &&
+      order.ft_order_tag !== trade.enter_tag &&
+      `订单标签：${order.ft_order_tag}`,
+    finalExit && trade.exit_reason && `离场原因：${trade.exit_reason}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 const ADJUSTMENT_SYMBOL =
@@ -67,79 +65,35 @@ function getTradeEntries(dataset: PairHistory, trades: Trade[]) {
   // 4: color
   // 5: label
   // 6: tooltip
-  const stop_ts_adjusted = dataset.data_stop_ts + dataset.timeframe_ms;
   for (const trade of trades) {
-    // const trade: Trade = trades[i];
-    const openTs = trade.open_fill_timestamp ?? trade.open_timestamp;
-    if (
-      // Trade is open or closed and within timerange
-      roundTimeframe(dataset.timeframe_ms ?? 0, trade.open_timestamp) <= stop_ts_adjusted ||
-      !trade.close_timestamp ||
-      (trade.close_timestamp && trade.close_timestamp >= dataset.data_start_ts)
-    ) {
-      if (trade.orders) {
-        for (const [j, order] of trade.orders.entries()) {
-          const orderTs =
-            order.order_filled_timestamp ??
-            ('order_timestamp' in order ? order.order_timestamp : trade.open_timestamp);
-          const { quoteCurrency } = splitTradePair(trade.quote_currency ?? trade.pair ?? '');
-          if (
-            orderTs &&
-            roundTimeframe(dataset.timeframe_ms ?? 0, orderTs) <= stop_ts_adjusted &&
-            orderTs > dataset.data_start_ts
-          ) {
-            // Trade entry
-            if (j === 0) {
-              tradeData.push([
-                roundTimeframe(dataset.timeframe_ms ?? 0, openTs),
-                order.safe_price,
-                OPEN_CLOSE_SYMBOL,
-                order.ft_order_side == 'sell' ? 180 : 0,
-                trade.is_short ? SHORT_COLOR : LONG_COLOR,
-                (trade.is_short ? 'Short' : 'Long') +
-                  (!order.order_filled_timestamp ? ' (open)' : ''),
-                buildToolTip(trade, order, 'entry', quoteCurrency),
-              ]);
-              // Trade exit
-            } else if (j === trade.orders.length - 1 && trade.close_timestamp) {
-              if (
-                roundTimeframe(dataset.timeframe_ms ?? 0, trade.close_timestamp) <=
-                  stop_ts_adjusted &&
-                trade.close_timestamp > dataset.data_start_ts &&
-                trade.is_open === false
-              ) {
-                tradeData.push([
-                  roundTimeframe(dataset.timeframe_ms ?? 0, trade.close_timestamp),
-                  order.safe_price,
-                  OPEN_CLOSE_SYMBOL,
-                  trade.is_short ? 0 : 180,
-                  trade.is_short ? SHORT_COLOR : LONG_COLOR,
-                  formatPercent(trade.profit_ratio, 2),
-                  buildToolTip(trade, order, 'exit', quoteCurrency),
-                ]);
-              }
-            }
-            // Position adjustment
-            else {
-              if (
-                order.ft_order_side !== 'stoploss' ||
-                ('filled' in order && (order.filled ?? 0) > 0)
-              ) {
-                // Don't show stoploss orders that haven't been filled
-                tradeData.push([
-                  roundTimeframe(dataset.timeframe_ms ?? 0, orderTs),
-                  order.safe_price,
-                  ADJUSTMENT_SYMBOL,
-                  order.ft_order_side == 'sell' ? 180 : 0,
-                  trade.is_short ? SHORT_COLOR : LONG_COLOR,
-                  '',
-                  buildAdjustmentToolTip(trade, order, quoteCurrency),
-                ]);
-              }
-            }
-          }
-        }
-      }
+    const entrySide = trade.is_short ? 'sell' : 'buy';
+    const side = trade.is_short ? '空' : '多';
+    const { quoteCurrency } = splitTradePair(trade.quote_currency ?? trade.pair);
+    const fills = (trade.orders ?? [])
+      .flatMap((order) => {
+        const time = filledAt(order);
+        return time === undefined ? [] : [{ order, time }];
+      })
+      .sort((left, right) => left.time - right.time);
+    const firstEntry = fills.find(({ order }) => order.ft_order_side === entrySide);
+    const lastExit =
+      !trade.is_open && [...fills].reverse().find(({ order }) => order.ft_order_side !== entrySide);
+    for (const fill of fills) {
+      const { order, time } = fill;
+      const candleTime = roundTimeframe(dataset.timeframe_ms, time);
+      if (candleTime < dataset.data_start_ts || candleTime > dataset.data_stop_ts) continue;
+      const entry = order.ft_order_side === entrySide;
+      const action = entry ? (fill === firstEntry ? '开' : '加') : fill === lastExit ? '平' : '减';
+      const label = `${action}${side}成交`;
+      tradeData.push([
+        candleTime,
+        order.safe_price,
+        fill === firstEntry || fill === lastExit ? OPEN_CLOSE_SYMBOL : ADJUSTMENT_SYMBOL,
+        Boolean(trade.is_short) === entry ? 180 : 0,
+        trade.is_short ? SHORT_COLOR : LONG_COLOR,
+        label,
+        buildToolTip(trade, order, label, time, quoteCurrency, fill === lastExit),
+      ]);
     }
   }
   return { tradeData };
@@ -157,7 +111,15 @@ export function generateTradeSeries(
 ): ScatterSeriesOption {
   const { tradeData } = getTradeEntries(dataset, trades);
 
-  const openTrade = trades.find((t) => t.is_open);
+  const openTrade = trades.find(
+    (trade) =>
+      trade.is_open &&
+      trade.orders?.some(
+        (order) =>
+          order.ft_order_side === (trade.is_short ? 'sell' : 'buy') &&
+          filledAt(order) !== undefined,
+      ),
+  );
 
   const tradesSeries: ScatterSeriesOption = {
     name: nameTrades,
@@ -176,9 +138,7 @@ export function generateTradeSeries(
       backgroundColor: theme !== 'dark' ? '#fff' : '#000',
       padding: 2,
       color: theme === 'dark' ? '#fff' : '#000',
-      rotate: 75,
-      offset: [10, 0],
-      align: 'left',
+      position: 'right',
     },
     itemStyle: {
       // color: tradeSellColor,
@@ -188,6 +148,8 @@ export function generateTradeSeries(
     symbol: (v) => v[2],
     symbolRotate: (v) => v[3],
     symbolSize: 13,
+    labelLayout: { hideOverlap: true },
+    z: 11,
     data: tradeData,
   };
   // Show distance to stoploss

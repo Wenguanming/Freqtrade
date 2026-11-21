@@ -33,7 +33,7 @@ docker compose up -d
 
 源码位于 `extensions/frequi/`，包含中文文本、策略参数显示、买卖信号标记及窄屏布局。
 
-- “图表”：机器人分析后的 K 线和策略信号。策略条件触发不等同于实际成交。
+- “图表”：合约 K 线下方的绿色 ▲ 是做多信号，上方的红色 ▼ 是做空信号。可点各方向的“定位最近”查看信号 K 线，或点“显示全部信号”恢复全图。三角不代表成交；“开多成交”“开空成交”等标记按订单实际成交价绘制。
 - “交易员操作”：显示熬鹰资本的公开成交，支持合约、多空筛选、成交/发现时间和数量价格。
 - “MU 永续 K 线”：进入 `MU/USDT:USDT` 图表。机器人运行时使用策略周期；机器人停用且周期为 15 分钟时，可使用只读公共行情。
 - 停用或重启机器人后，原生图表的分析缓存可能为空。恢复模拟运行会重新加载；本地历史文件和交易数据库不会因此删除。
@@ -62,10 +62,13 @@ FreqUI 入口：<http://127.0.0.1:8080/leader>。公开记录可能延迟或缺�
 | --- | --- |
 | `extensions/strategies/sample_strategy.py` | 原版 SampleStrategy，5 分钟，仅做多 |
 | `extensions/strategies/SampleStrategyFutures.py` | 继承 SampleStrategy，允许做空，固定 1 倍杠杆 |
+| `extensions/strategies/DirectionalSweep15m.py` | 15 分钟策略：ETH 可做多、做空；BTC、SOL 仅做空，MU 仅做多 |
 | `extensions/strategies/BanmuxiaMACDDivergence.py` | 此前适配的 MACD 背离策略，保留供研究 |
 | `extensions/strategies/EMASkipPump.py` | 此前试用的公开策略，保留供研究 |
 
 更换策略时同时检查 `docker-compose.yml` 的 `--strategy` 与本机配置的 `strategy`、`timeframe`；运行中的命令行参数会覆盖配置。
+
+`DirectionalSweep15m` 用前 12 根已收盘 K 线的高低点判断是否突破。ETH 扫低后收盘回升标为“扫低回升”，冲高后收盘回落标为“冲高回落”；同根同时触发则跳过，不同时开多和开空。仅回测 ETH 时，选择 `ETH/USDT:USDT` 和 `15m`。仓库默认示例策略不变。
 
 ## 验证
 

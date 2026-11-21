@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import type { ChartSliderPosition, IndicatorConfig, PairHistory, PlotConfig, Trade } from '@/types';
 import { ChartType } from '@/types';
+import type { CandleSignal } from '@/utils/charts/candleSignals';
 
 import ECharts from 'vue-echarts';
 
-import type { EChartsOption, ScatterSeriesOption } from 'echarts';
+import type { EChartsOption } from 'echarts';
 import { BarChart, CandlestickChart, LineChart, ScatterChart } from 'echarts/charts';
 import {
   AxisPointerComponent,
@@ -60,7 +61,8 @@ const props = defineProps<{
   heikinAshi: boolean;
   showMarkArea: boolean;
   showSignalLabels: boolean;
-  showShortSignals: boolean;
+  signals: CandleSignal[];
+  fillSeriesName: string;
   useUTC: boolean;
   plotConfig: PlotConfig;
   theme: 'dark' | 'light';
@@ -85,12 +87,6 @@ const upColor = props.colorUp;
 const upBorderColor = props.colorUp;
 const downColor = props.colorDown;
 const downBorderColor = props.colorDown;
-
-// Buy / Sell Signal Colors
-const buySignalColor = '#00ff26';
-const shortEntrySignalColor = '#ff6b81';
-const sellSignalColor = '#faba25';
-const shortexitSignalColor = '#62c7ff';
 
 const candleChart = useTemplateRef<InstanceType<typeof ECharts>>('candleChart');
 const chartOptions = shallowRef<EChartsOption>({});
@@ -163,18 +159,11 @@ function updateChart(initial = false) {
   const colLow = columns.findIndex((el) => el === 'low');
   const colClose = columns.findIndex((el) => el === 'close');
   const colVolume = columns.findIndex((el) => el === 'volume');
-  const colEnterTag = columns.findIndex((el) => el === 'enter_tag');
-  const colExitTag = columns.findIndex((el) => el === 'exit_tag');
-
-  const colEntryData = columns.findIndex(
-    (el) => el === '_buy_signal_close' || el === '_enter_long_signal_close',
-  );
-  const colExitData = columns.findIndex(
-    (el) => el === '_sell_signal_close' || el === '_exit_long_signal_close',
-  );
-
-  const colShortEntryData = columns.findIndex((el) => el === '_enter_short_signal_close');
-  const colShortExitData = columns.findIndex((el) => el === '_exit_short_signal_close');
+  const legend = chartOptions.value.legend;
+  if (legend && !Array.isArray(legend)) {
+    legend.data = ['Candles', 'Volume', ...props.signals.map((signal) => signal.name)];
+    if (props.dataset.data_source !== 'public-market') addLegend(props.fillSeriesName);
+  }
 
   const subplotCount =
     'subplots' in props.plotConfig ? Object.keys(props.plotConfig.subplots).length + 1 : 1;
@@ -350,120 +339,55 @@ function updateChart(initial = false) {
     if (areaSeries) {
       options.series.push(areaSeries);
     }
-    const signalConfigs = [
-      {
-        colData: colEntryData,
-        name: props.showShortSignals ? '开多信号' : '买入信号',
-        label: props.showShortSignals ? '开多' : '买入',
-        labelPosition: 'bottom' as const,
-        symbol: 'triangle',
-        symbolSize: 13,
-        color: buySignalColor,
-        tooltipPrefix: props.showShortSignals ? '开多信号（未必成交）' : '买入信号（未必成交）',
-        colTooltip: colEnterTag,
-      },
-      {
-        colData: colExitData,
-        name: props.showShortSignals ? '平多信号' : '卖出信号',
-        label: props.showShortSignals ? '平多' : '卖出',
-        labelPosition: props.showShortSignals ? ('bottom' as const) : ('top' as const),
-        symbol: 'diamond',
-        symbolSize: 12,
-        color: sellSignalColor,
-        tooltipPrefix: props.showShortSignals ? '平多信号（未必成交）' : '卖出信号（未必成交）',
-        colTooltip: colExitTag,
-      },
-      {
-        colData: props.showShortSignals ? colShortEntryData : -1,
-        name: '开空信号',
-        label: '开空',
-        labelPosition: 'top' as const,
-        symbol: 'triangle',
-        symbolSize: 13,
-        symbolRotate: 180,
-        color: shortEntrySignalColor,
-        tooltipPrefix: '做空开仓信号（未必成交）',
-        colTooltip: colEnterTag,
-      },
-      {
-        colData: props.showShortSignals ? colShortExitData : -1,
-        name: '平空信号',
-        label: '平空',
-        labelPosition: 'top' as const,
-        symbol: 'diamond',
-        symbolSize: 12,
-        color: shortexitSignalColor,
-        tooltipPrefix: '做空平仓信号（未必成交）',
-        colTooltip: colExitTag,
-      },
-    ];
-
-    for (const signal of signalConfigs) {
-      if (signal.colData >= 0) {
-        options.series.push({
-          name: signal.name,
-          type: 'scatter',
-          symbol: signal.symbol,
-          symbolSize: signal.symbolSize,
-          symbolRotate: signal.symbolRotate ?? 0,
-          symbolOffset: [0, signal.labelPosition === 'bottom' ? 14 : -14],
-          // Long and short conditions may share a candle. Keep their markers on opposite sides.
-          data: dataset.map((row) => [
-            ...row,
-            row[signal.colData] != null
-              ? row[signal.labelPosition === 'bottom' ? colLow : colHigh]
-              : null,
-          ]),
-          clip: false,
-          xAxisIndex: 0,
-          yAxisIndex: 0,
-          itemStyle: {
-            color: signal.color,
+    const dark = props.theme === 'dark';
+    const signalColors = {
+      enter_long: dark ? '#34d399' : '#047857',
+      enter_short: dark ? '#fb7185' : '#be123c',
+      exit_long: dark ? '#faba25' : '#a16207',
+      exit_short: dark ? '#62c7ff' : '#0369a1',
+    };
+    for (const signal of props.signals) {
+      const color = signalColors[signal.key];
+      options.series.push({
+        name: signal.name,
+        type: 'scatter',
+        symbol: signal.entry ? 'triangle' : 'diamond',
+        symbolSize: signal.entry ? 13 : 11,
+        symbolRotate: signal.key === 'enter_short' ? 180 : 0,
+        symbolOffset: [0, signal.below ? 14 : -14],
+        data: signal.points,
+        clip: false,
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        itemStyle: {
+          color,
+        },
+        z: 10,
+        labelLayout: { hideOverlap: true },
+        label: {
+          show: props.showSignalLabels,
+          formatter: signal.name,
+          position: signal.below ? 'bottom' : 'top',
+          distance: 6,
+          fontSize: 11,
+          fontWeight: 'bold',
+          color,
+          backgroundColor: props.theme === 'dark' ? 'rgba(15,23,42,0.9)' : 'rgba(255,255,255,0.95)',
+          padding: [2, 4],
+          borderRadius: 3,
+        },
+        tooltip: {
+          valueFormatter: (value) => {
+            const [close, tag] = Array.isArray(value) ? value : [value];
+            return `信号 K 线收盘价：${close}${tag ? `（${tag}）` : ''}，非成交价`;
           },
-          z: 10,
-          labelLayout: { moveOverlap: 'shiftY', hideOverlap: false },
-          label: {
-            show: props.showSignalLabels,
-            formatter: signal.label,
-            position: signal.labelPosition,
-            distance: 6,
-            fontSize: 11,
-            fontWeight: 'bold',
-            color: signal.color,
-            backgroundColor:
-              props.theme === 'dark' ? 'rgba(15,23,42,0.9)' : 'rgba(255,255,255,0.95)',
-            padding: [2, 4],
-            borderRadius: 3,
-          },
-          tooltip: {
-            valueFormatter: (value) => {
-              if (Array.isArray(value)) {
-                if (value.length > 0 && value[0]) {
-                  // If tag column number gets too high, we get the full list as second argument (for no good reason)
-                  const tag = Array.isArray(value[1])
-                    ? value[1][signal.colTooltip]?.toString()
-                    : value[1]?.toString();
-                  const tagShort = tag?.substring(0, 100) ?? '';
-
-                  // Show both prefix and tag
-                  // Value would be in value[0] - but we don't show this to avoid showing the same data multiple times as it would correspond to the close price of the candle.
-                  return `${signal.tooltipPrefix} ${tagShort ? `(${tagShort})` : ''}`;
-                }
-                // fall back to empty output if tag ain't set.
-                return '';
-              }
-              // Fallback for single value
-              return value ? `${signal.tooltipPrefix} ${value}` : '';
-            },
-          },
-          encode: {
-            x: colDate,
-            y: columns.length,
-            tooltip:
-              signal.colTooltip >= 0 ? [signal.colData, signal.colTooltip] : [signal.colData],
-          },
-        });
-      }
+        },
+        encode: {
+          x: 0,
+          y: 1,
+          tooltip: [2, 3],
+        },
+      });
     }
   }
 
@@ -608,17 +532,10 @@ function updateChart(initial = false) {
     }
   }
 
-  const nameTrades = '实际成交';
-  // Insert trades into legend, after the default columns
-  addLegend(nameTrades, 4);
-  const tradesSeries: ScatterSeriesOption = generateTradeSeries(
-    nameTrades,
-    props.theme,
-    props.dataset,
-    filteredTrades.value,
-  );
-  if (Array.isArray(options.series)) {
-    options.series.push(tradesSeries);
+  if (Array.isArray(options.series) && props.dataset.data_source !== 'public-market') {
+    options.series.push(
+      generateTradeSeries(props.fillSeriesName, props.theme, props.dataset, filteredTrades.value),
+    );
   }
 
   // Merge this into original data
@@ -646,15 +563,7 @@ function initializeChartOptions() {
     animation: false,
     legend: {
       // Initial legend, further entries are pushed to the below list
-      data: [
-        'Candles',
-        'Volume',
-        ...(props.dataset.data_source === 'public-market'
-          ? []
-          : props.showShortSignals
-            ? ['开多信号', '平多信号', '开空信号', '平空信号']
-            : ['买入信号', '卖出信号']),
-      ],
+      data: [],
       formatter: (name: string) =>
         (
           ({
@@ -774,7 +683,29 @@ function showAllSignals() {
   });
 }
 
-defineExpose({ showAllSignals });
+function showLatestSignal(signal: CandleSignal) {
+  const latest = signal.points.at(-1);
+  const chart = candleChart.value;
+  if (!chart || !latest) return;
+  const radius = props.dataset.timeframe_ms * 12;
+  chart.dispatchAction({ type: 'legendSelect', name: signal.name });
+  chart.dispatchAction({
+    type: 'dataZoom',
+    dataZoomIndex: 0,
+    startValue: Math.max(props.dataset.data_start_ts, latest[0] - radius),
+    endValue: Math.min(props.dataset.data_stop_ts + props.dataset.timeframe_ms, latest[0] + radius),
+  });
+  if (Array.isArray(chartOptions.value.series)) {
+    const seriesIndex = chartOptions.value.series.findIndex(
+      (series) => series.name === signal.name,
+    );
+    if (seriesIndex >= 0) {
+      chart.dispatchAction({ type: 'showTip', seriesIndex, dataIndex: signal.points.length - 1 });
+    }
+  }
+}
+
+defineExpose({ showAllSignals, showLatestSignal });
 
 // const buyData = ref<number[][]>([]);
 // const sellData = ref<number[][]>([]);
@@ -798,9 +729,8 @@ onMounted(() => {
   initializeChartOptions();
 });
 
-watch(
-  [() => props.useUTC, () => props.theme, () => props.plotConfig, () => props.showShortSignals],
-  () => initializeChartOptions(),
+watch([() => props.useUTC, () => props.theme, () => props.plotConfig], () =>
+  initializeChartOptions(),
 );
 
 watch(
@@ -809,9 +739,15 @@ watch(
     () => props.heikinAshi,
     () => props.showMarkArea,
     () => props.showSignalLabels,
+    () => props.signals,
+    () => props.fillSeriesName,
   ],
   () => updateChart(),
 );
+
+watch(filteredTrades, (current, previous) => {
+  if (current.length || previous.length) updateChart();
+});
 
 watch(
   () => props.sliderPosition,
